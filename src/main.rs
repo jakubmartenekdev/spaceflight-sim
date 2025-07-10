@@ -1,15 +1,21 @@
-use std::ops::DerefMut;
+use std::time::Duration;
 
-use avian3d::{collision::CollisionDiagnostics, prelude::*};
-use bevy::{
-    asset::io::memory::Dir,
-    ecs::entity::hash_map::Keys,
-    input::{common_conditions::input_toggle_active, keyboard::KeyboardInput},
-    math::{VectorSpace, cubic_splines::LinearSpline},
+use avian3d::{
+    parry::na::{ComplexField, distance},
     prelude::*,
+};
+use bevy::{
+    color::palettes::css::{GREEN, YELLOW},
+    input::{common_conditions::input_toggle_active, keyboard::KeyboardInput},
+    prelude::*,
+    reflect::List,
+    time::Timer,
 };
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
+
+#[derive(Resource)]
+struct Scheduler(Timer);
 
 #[derive(Component)]
 struct Pull(Vec3);
@@ -33,6 +39,11 @@ struct Controllable;
 #[derive(Component)]
 struct Planet;
 
+#[derive(Component)]
+struct OrbitPath {
+    points: Vec<Vec3>,
+}
+
 fn main() {
     App::new()
         // Enable physics
@@ -46,8 +57,16 @@ fn main() {
         .add_plugins(PanOrbitCameraPlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, move_system)
+        .add_systems(
+            Update,
+            draw_path.run_if(input_toggle_active(false, KeyCode::Tab)),
+        )
         // .add_systems(Update, slow_down)
         .insert_resource(Gravity::default())
+        .insert_resource(Scheduler(Timer::new(
+            Duration::from_secs_f32(0.1),
+            TimerMode::Repeating,
+        )))
         .run();
 }
 
@@ -76,29 +95,14 @@ fn setup(
             mesh: Mesh3d(meshes.add(Sphere::new(0.5))),
             material: MeshMaterial3d(materials.add(Color::WHITE)),
         },
+        ExternalForce::ZERO,
         GravityScale(0.0),
         ExternalImpulse::ZERO,
-        Transform::from_xyz(0.0, -10.0, 0.0),
+        Transform::from_xyz(0.0, 10.0, 0.0),
+        OrbitPath { points: vec![] },
         Controllable,
+        // Mass(1.0),
     ));
-    // commands.spawn((
-    //     RigidBody::Dynamic,
-    //     Collider::sphere(1.0),
-    //     Mesh3d(meshes.add(Sphere::new(1.0))),
-    //     MeshMaterial3d(materials.add(Color::BLACK)),
-    //     Transform::from_xyz(0.5, 10.0, 0.0),
-    //     // LinearVelocity(Vec3::new(0., 0., -2.)),
-    //     LinearDamping(1.0),
-    //     LinearVelocity::ZERO,
-    //     // Friction::new(0.4).with_dynamic_coefficient(0.6),
-    //     // ExternalImpulse::new(Vec3::new(1., 0., 0.)).with_persistence(true),
-    //     // ExternalForce::new(Vec3::new(1., 0., 0.)),
-    //     // ExternalForce::new(Vec3::new(10.0, 0., 0.)),
-    //     Name::new("Black marble"),
-    //     // Mass(10.0),
-    //     // Friction::new(40.0).with_dynamic_coefficient(0.6),
-    //     GravityScale(0.0),
-    // ));
 
     // Light
     commands.spawn((
@@ -123,6 +127,7 @@ fn move_system(
         (
             &mut LinearVelocity,
             &mut Transform,
+            &mut ExternalForce,
             &mut ExternalImpulse,
             &Pull,
         ),
@@ -131,21 +136,64 @@ fn move_system(
     planet: Query<(&Transform), (With<Planet>, Without<Controllable>)>,
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    mut paths: Query<&mut OrbitPath>,
+    mut timer: ResMut<Scheduler>,
+    mut gizmos: Gizmos,
 ) {
     let dt = time.delta_secs();
-    let (mut velocity, mut transform, mut impulse, gravity) = celestial_body.single_mut().unwrap();
+    // let G = 6.674e-11;
+    let (mut velocity, mut transform, mut force, mut impulse, gravity) =
+        celestial_body.single_mut().unwrap();
     let dest = planet.single().unwrap().translation;
     let mut current_pos = transform.translation;
-    let fall = (dest - current_pos).normalize_or_zero() * -(gravity.0.y) * 10. * dt;
 
-    // dbg!(dest - current_pos);
-    dbg!(current_pos);
-    // dbg!((dest - current_pos).normalize() * gravity.0);
-    // current_pos = fall;
-    velocity.0 += fall;
+    let distance = (current_pos - dest).length();
+    // Fg = G(m1*m2)/l^2
+    let fg = 1.0 * (20.0 * 30.0) / distance.powi(2);
+    let fall_dir = (current_pos - dest).normalize_or_zero() * -fg * dt; // * gravity.0.y ;
+    if distance - 3.0 - 0.5 < 0.1 {
+        force.set_force(Vec3::ZERO);
+    } else {
+        let acceleration = fall_dir / 20.0; // a = F/m
+        // dbg!(acceleration);
+        velocity.0 += acceleration;
+        // velocity.0 += fall_dir;
+        // force.apply_force(fall_dir);
+    }
+    // dbg!(distance - 3.0 - 0.5);
+    // dbg!(velocity.0.length() < 0.1);
 
-    if input.just_pressed(KeyCode::Space) {
-        impulse.set_impulse(Vec3::new(0., 0., 20.));
+    // dbg!(fall_dir);
+    // dbg!(fg);
+
+    timer.0.tick(time.delta());
+    if timer.0.just_finished() {
+        paths.single_mut().unwrap().points.push(current_pos);
+    }
+
+    gizmos.arrow(current_pos, dest, YELLOW);
+
+    if input.just_pressed(KeyCode::Backspace) {
+        // velocity.0 = Vec3::ZERO;
+        force.set_force(Vec3::ZERO);
+        // force.apply_force(Vec3::ZERO);
+        // println!("JAKOOOOO");
+    }
+
+    if !input.pressed(KeyCode::ShiftLeft) && input.just_pressed(KeyCode::Space) {
+        impulse.apply_impulse(Vec3::new(0.1, 0., 0.));
+        // let tangent = (dest - current_pos).normalize().cross(Vec3::Z); // Perpendicular vector
+        // impulse.set_impulse(tangent * 4.0);
+    }
+
+    if input.pressed(KeyCode::ShiftLeft) && input.just_pressed(KeyCode::Space) {
+        impulse.set_impulse(Vec3::new(-0.1, 0., 0.));
+    }
+}
+
+fn draw_path(mut gizmos: Gizmos, paths: Query<&OrbitPath>) {
+    for path in &paths {
+        gizmos.linestrip(path.points.clone(), GREEN);
     }
 }
 
