@@ -19,6 +19,15 @@ codegen-units = 1
 
 [dependencies]
 avian3d = "0.3"
-bevy = { version = "0.16.1", features = ["dynamic_linking", "wayland"] }
+bevy = { version = "0.16.1", features = ["wayland"] }
 bevy-inspector-egui = "0.31.0"
 bevy_panorbit_camera = "0.27.0"
+
+[features]
+default = [
+  "dev"
+]
+
+dev = [
+  "bevy/dynamic_linking",
+]
