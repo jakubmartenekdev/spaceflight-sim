@@ -1,23 +1,18 @@
-#[cfg(feature = "dev")]
-mod dev_tools;
+// #[cfg(feature = "dev")]
+// mod dev_tools;
+mod solar_system;
 
-use std::time::Duration;
-
-use avian3d::{
-    parry::na::{ComplexField, distance},
-    prelude::*,
-};
-use bevy::{
-    color::palettes::css::{GREEN, YELLOW},
-    ecs::name::Name,
-    input::{common_conditions::input_toggle_active, keyboard::KeyboardInput},
-    prelude::*,
-    time::Timer,
-};
+use avian3d::{parry::na::ComplexField, prelude::*};
+use bevy::{ecs::name::Name, prelude::*};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 
-#[derive(Resource)]
-struct Scheduler(Timer);
+// 1000KM on 1M
+const WORLD_SCALE: f32 = 1.0 / 1_000_000.0;
+
+const EARTH_RADIUS: f32 = 6_378_000.0 * WORLD_SCALE;
+const MOON_RADIUS: f32 = 1_736_000.0 * WORLD_SCALE;
+const EARTH_MASS: f64 = 5.9722e24;
+const MOON_MASS: f64 = 7.342e22;
 
 #[derive(Component)]
 struct Pull(Vec3);
@@ -41,6 +36,8 @@ struct Controllable;
 #[derive(Component)]
 struct Planet;
 
+//todo: SolarSystem with list of planets
+
 #[derive(Reflect, Component)]
 #[reflect(Component)]
 struct OrbitPath {
@@ -48,7 +45,9 @@ struct OrbitPath {
 }
 
 fn main() {
-    App::new()
+    // std::env::set_var("WGPU_BACKEND", "vulkan");
+    // #[cfg(feature = "dev")]
+    let app = App::new()
         // External plugins
         .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
         // .add_plugins(
@@ -56,16 +55,13 @@ fn main() {
         // )
         .add_plugins(PanOrbitCameraPlugin)
         .add_systems(Startup, setup)
-        .add_systems(Update, move_system)
+        // .add_systems(Update, move_system)
         // .add_systems(Update, slow_down)
-        .insert_resource(Gravity::default())
-        .insert_resource(Scheduler(Timer::new(
-            Duration::from_secs_f32(0.1),
-            TimerMode::Repeating,
-        )))
-        .register_type::<OrbitPath>()
+        .insert_resource(Gravity::ZERO)
+        // .register_type::<OrbitPath>()
         // Module level plugins
-        .add_plugins(dev_tools::plugin)
+        .add_plugins(solar_system::plugin)
+        // .add_plugins(dev_tools::plugin) // #[cfg(feature = "dev")]
         .run();
 }
 
@@ -76,8 +72,8 @@ fn setup(
 ) {
     commands.spawn((
         RigidBody::Static,
-        Collider::sphere(3.0),
-        Mesh3d(meshes.add(Sphere::new(3.0))),
+        Collider::sphere(EARTH_RADIUS),
+        Mesh3d(meshes.add(Sphere::new(EARTH_RADIUS))),
         MeshMaterial3d(materials.add(Color::BLACK)),
         GravityScale(0.0),
         // LinearVelocity(Vec3::X),
@@ -88,38 +84,20 @@ fn setup(
     commands.spawn((
         CelestialBody {
             rb: RigidBody::Dynamic,
-            collider: Collider::sphere(0.5),
+            collider: Collider::sphere(MOON_RADIUS),
             gravity_pull: Pull(Vec3::new(0.0, -9.81, 0.0)),
             // velocity: LinearVelocity::ZERO,
-            velocity: LinearVelocity(Vec3::new(2.0, 0.0, 0.0)),
-            mesh: Mesh3d(meshes.add(Sphere::new(0.5))),
+            velocity: LinearVelocity(Vec3::new(15.0, 0.0, 0.0)),
+            mesh: Mesh3d(meshes.add(Sphere::new(MOON_RADIUS))),
             material: MeshMaterial3d(materials.add(Color::WHITE)),
         },
         ExternalForce::ZERO,
         GravityScale(0.0),
         ExternalImpulse::ZERO,
-        Transform::from_xyz(0.0, 10.0, 0.0),
+        Transform::from_xyz(0.0, 384_400_000.0 * WORLD_SCALE / 2.0, 0.0),
         OrbitPath { points: vec![] },
         Controllable,
         Name::new("Celestial Object"),
-    ));
-    commands.spawn((
-        CelestialBody {
-            rb: RigidBody::Dynamic,
-            collider: Collider::sphere(0.5),
-            gravity_pull: Pull(Vec3::new(0.0, -9.81, 0.0)),
-            // velocity: LinearVelocity::ZERO,
-            velocity: LinearVelocity(Vec3::new(1.0, 0.0, 1.0)),
-            mesh: Mesh3d(meshes.add(Sphere::new(0.5))),
-            material: MeshMaterial3d(materials.add(Color::WHITE)),
-        },
-        ExternalForce::ZERO,
-        GravityScale(0.0),
-        ExternalImpulse::ZERO,
-        Transform::from_xyz(0.0, 13.0, 0.0),
-        OrbitPath { points: vec![] },
-        Controllable,
-        Name::new("Celestial Object 2"),
     ));
 
     // Light
@@ -151,37 +129,41 @@ fn move_system(
         ),
         With<Controllable>,
     >,
-    planet: Query<(&Transform), (With<Planet>, Without<Controllable>)>,
+    planet: Query<&Transform, (With<Planet>, Without<Controllable>)>,
     input: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut paths: Query<&mut OrbitPath>,
-    mut timer: ResMut<Scheduler>,
-    mut gizmos: Gizmos,
+    paths: Query<&mut OrbitPath>,
+    gizmos: Gizmos,
 ) {
     let dt = time.delta_secs();
-    // let G = 6.674e-11;
-    for (mut velocity, mut transform, mut force, mut impulse, gravity) in &mut celestial_body {
+    let G = 6.674e-11;
+    for (mut velocity, transform, mut force, mut impulse, gravity) in &mut celestial_body {
         let dest = planet.single().unwrap().translation;
-        let mut current_pos = transform.translation;
+        let current_pos = transform.translation;
 
-        let distance = (current_pos - dest).length();
+        let distance = (current_pos - dest).length() / WORLD_SCALE;
+        let dir = (dest - current_pos).normalize_or_zero();
         // Fg = G(m1*m2)/l^2
-        let fg = 1.0 * (20.0 * 30.0) / distance.powi(2);
-        let fall_dir = (current_pos - dest).normalize_or_zero() * -fg * dt; // * gravity.0.y ;
-        if distance - 3.0 - 0.5 < 0.1 {
-            force.set_force(Vec3::ZERO);
-        } else {
-            let acceleration = fall_dir / 20.0; // a = F/m
-            // dbg!(acceleration);
-            velocity.0 += acceleration;
-            // velocity.0 += fall_dir;
-            // force.apply_force(fall_dir);
-        }
-        dbg!(velocity.0.length());
-        // dbg!(distance - 3.0 - 0.5);
-        // dbg!(velocity.0.length() < 0.1);
+        let fg = G * (EARTH_MASS * MOON_MASS) / distance.powi(2) as f64;
+        // let fall_dir = ((current_pos - dest) * WORLD_SCALE).normalize_or_zero() * -fg * dt; // * gravity.0.y ;
+        // if distance - 3.0 - 0.5 < 0.1 {
+        //     force.set_force(Vec3::ZERO);
+        // } else {
+        // let acceleration = dir * -fg as f32 / MOON_MASS as f32; // a = F/m
+        // dbg!(fg as f32 / MOON_MASS as f32 * WORLD_SCALE * dt);
+        let acceleration = dir * fg as f32 / MOON_MASS as f32 * WORLD_SCALE * dt; // a = F/m
 
-        // dbg!(fall_dir);
+        // dbg!(acceleration / WORLD_SCALE * 1000.0);
+        velocity.0 += acceleration * dt;
+        // velocity.0 += fall_dir;
+        // velocity.0 -= Vec3::new(0.0, 0.1, 0.0);
+        // force.apply_force(fall_dir);
+        // }
+        // dbg!(velocity.0);
+        // dbg!(distance - 3.0 - 0.5);
+        // dbg!(velocity.0.length());
+
+        // dbg!(dir);
         // dbg!(fg);
 
         // gizmos.arrow(current_pos, dest, YELLOW);
@@ -210,7 +192,7 @@ fn slow_down(
     input: Res<ButtonInput<KeyCode>>,
 ) {
     if input.just_pressed(KeyCode::Space) {
-        for (mut f, mut vel) in &mut spheres {
+        for (mut f, vel) in &mut spheres {
             // dbg!(f.force());
             dbg!(vel.0);
             f.set_force(Vec3::ZERO);
