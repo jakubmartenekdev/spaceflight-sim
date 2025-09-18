@@ -1,5 +1,5 @@
-// #[cfg(feature = "dev")]
-// mod dev_tools;
+#[cfg(feature = "dev")]
+mod dev_tools;
 mod solar_system;
 
 use avian3d::{parry::na::ComplexField, prelude::*};
@@ -46,7 +46,7 @@ struct OrbitPath {
 
 fn main() {
     // std::env::set_var("WGPU_BACKEND", "vulkan");
-    // #[cfg(feature = "dev")]
+    #[cfg(feature = "dev")]
     let app = App::new()
         // External plugins
         .add_plugins((DefaultPlugins, PhysicsPlugins::default()))
@@ -61,7 +61,7 @@ fn main() {
         // .register_type::<OrbitPath>()
         // Module level plugins
         .add_plugins(solar_system::plugin)
-        // .add_plugins(dev_tools::plugin) // #[cfg(feature = "dev")]
+        .add_plugins(dev_tools::plugin) // #[cfg(feature = "dev")]
         .run();
 }
 

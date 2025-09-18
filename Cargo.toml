@@ -1,6 +1,3 @@
 [workspace]
 resolver = "3"
-members = [
-  "game",
-  "export_state"
-]
+members = ["game", "server"]
