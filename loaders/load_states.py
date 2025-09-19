@@ -1,51 +1,58 @@
-from skyfield.api import load
-from contextlib import closing
+from skyfield.api import Time, load
+from skyfield import relativity
 
 import json
 
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+parser.add_argument(
+    "-u",
+    "--utc_date",
+    type=int,
+    nargs=3,
+    metavar=("YEAR", "MONTH", "DAY"),
+    help="Constructs utc date",
+)
+
+args = parser.parse_args()
+# print(args)
+
 ts = load.timescale()
-t = ts.now()
+time: Time
+if args.utc_date is not None:
+    year, month, day = args.utc_date
+    time = ts.utc(year, month, day)
+else:
+    time = ts.now()
+
+relativity.deflectors = ["jupiter", "saturn"]
 
 eph = load("de421.bsp")
-sun = eph["Sun"]
-# print(planets)
+sun = eph["sun"]
 
 bodies = [
-    "Mercury",
-    "Venus",
-    "Earth",
-    # "Moon"
-    # "Sun",
-    "Mars",
-    "Jupiter BARYCENTER",
-    "Saturn BARYCENTER",
-    "Uranus BARYCENTER",
-    "Neptune BARYCENTER",
+    "mercury",
+    "venus",
+    "earth",
+    # "moon"
+    "sun",
+    "mars",
+    "jupiter barycenter",
+    "saturn barycenter",
+    "uranus barycenter",
+    "neptune barycenter",
 ]
 
 with open("states.json", "w") as f:
-    data = []
+    data = {}
+    data["time"] = time.utc_datetime().isoformat()
     for body in bodies:
-        d = sun.at(t).observe(eph[body]).apparent()  # type: ignore
+        d = sun.at(time).observe(eph[body]).apparent()  # type: ignore
 
-        data.append(
-            {
-                "name": body,
-                "dist": list(d.xyz.km),
-                "velocity": list(d.velocity.km_per_s),
-            }
-        )
-        if body == "Earth":
-            print(d.distance())
+        data[body] = {
+            "dist": list(d.xyz.km),
+            "velocity": list(d.velocity.km_per_s),
+        }
 
     json.dump(data, f, indent=2)
-
-# What's the position of Mars, viewed from Earth?
-# astrometric = earth.at(t).observe(moon)  # type: ignore
-# ra, dec, distance = astrometric.radec()
-
-# print(d.xyz.km)
-# print(d.distance().km)
-# print(d.velocity.km_per_s.distance)
-# print(d.center)
-# print(d.target)
