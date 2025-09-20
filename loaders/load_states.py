@@ -1,3 +1,5 @@
+import astropy
+from astropy.constants import M_earth
 from skyfield.api import Time, load
 from skyfield import relativity
 
@@ -5,6 +7,7 @@ import json
 
 from argparse import ArgumentParser
 
+print(type(M_earth.value))
 parser = ArgumentParser()
 parser.add_argument(
     "-u",
@@ -36,7 +39,6 @@ bodies = [
     "venus",
     "earth",
     # "moon"
-    "sun",
     "mars",
     "jupiter barycenter",
     "saturn barycenter",
@@ -48,11 +50,12 @@ with open("states.json", "w") as f:
     data = {}
     data["time"] = time.utc_datetime().isoformat()
     for body in bodies:
-        d = sun.at(time).observe(eph[body]).apparent()  # type: ignore
+        apparent = sun.at(time).observe(eph[body]).apparent()  # type: ignore
 
         data[body] = {
-            "dist": list(d.xyz.km),
-            "velocity": list(d.velocity.km_per_s),
+            "dist": list(apparent.xyz.km),
+            "velocity": list(apparent.velocity.km_per_s),
+            "mass": M_earth.value,
         }
 
     json.dump(data, f, indent=2)
