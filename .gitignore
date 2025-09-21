@@ -1,4 +1,4 @@
 /target
 /loaders/dist
 /loaders/build/load_states
-/loaders/*.bsp
+*.bsp
